@@ -1,5 +1,7 @@
 #![feature(test)]
 
+use serde_pickle::SerOptions;
+
 extern crate test;
 
 use {
@@ -76,8 +78,26 @@ enum Enum {
     D = 3
 }
 
+impl Default for Enum {
+    fn default() -> Self {
+        todo!()
+    }
+}
+
 #[derive(PartialEq, Debug, Serialize, Deserialize, Readable, Writable)]
 struct Foo {
+    a: u8,
+    b: u64,
+    c: String,
+    d: Vec< u8 >,
+    e: f32,
+    f: f64,
+    g: Enum
+}
+
+#[derive(PartialEq, Debug, Serialize, Deserialize, Readable, Writable)]
+#[speedy(non_exhaustive)]
+struct FooNonExhaustive {
     a: u8,
     b: u64,
     c: String,
@@ -101,6 +121,20 @@ impl Default for Foo {
     }
 }
 
+impl Default for FooNonExhaustive {
+    fn default() -> Self {
+        FooNonExhaustive {
+            a: 77,
+            b: 0x12345678ABCDEF00,
+            c: "A very long and totally pointless string".to_owned(),
+            d: vec![ 0, 1, 2, 3, 4, 5, 10, 15, 20, 100, 255 ],
+            e: 3.1415,
+            f: 2.7182,
+            g: Enum::C
+        }
+    }
+}
+
 #[inline]
 fn empty_vec() -> Vec< u8 > {
     Vec::with_capacity( 256 )
@@ -109,6 +143,11 @@ fn empty_vec() -> Vec< u8 > {
 #[inline(never)]
 fn default_value() -> Foo {
     black_box( Foo::default() )
+}
+
+#[inline(never)]
+fn default_value_ne() -> FooNonExhaustive {
+    black_box( FooNonExhaustive::default() )
 }
 
 #[inline]
@@ -254,7 +293,7 @@ fn serialize_prost( b: &mut Bencher ) {
 }
 
 macro_rules! speedy_benches {
-    ($serialize_fn_name:ident, $deserialize_fn_name:ident, $endianness:expr) => {
+    ($serialize_fn_name:ident, $deserialize_fn_name:ident, $endianness:expr, $serialize_ne_fname:ident, $deserialize_ne_fname:ident) => {
         #[bench]
         fn $serialize_fn_name( b: &mut Bencher ) {
             use speedy::Writable;
@@ -262,7 +301,7 @@ macro_rules! speedy_benches {
             let value = default_value();
             b.iter( || {
                 let mut buffer = empty_vec();
-                value.write_to_stream( $endianness, &mut buffer ).unwrap();
+                value.write_to_stream(  &mut buffer ).unwrap();
                 buffer
             });
         }
@@ -273,10 +312,36 @@ macro_rules! speedy_benches {
 
             let value = default_value();
             let mut buffer = empty_vec();
-            value.write_to_stream( $endianness, &mut buffer ).unwrap();
+            value.write_to_stream( &mut buffer ).unwrap();
 
             b.iter( || {
-                let deserialized: Foo = Readable::read_from_buffer( $endianness, &buffer ).unwrap();
+                let deserialized: Foo = Readable::read_from_buffer( &buffer ).unwrap();
+                deserialized
+            });
+        }
+
+        #[bench]
+        fn $serialize_ne_fname( b: &mut Bencher ) {
+            use speedy::Writable;
+
+            let value = default_value_ne();
+            b.iter( || {
+                let mut buffer = empty_vec();
+                value.write_to_stream(  &mut buffer ).unwrap();
+                buffer
+            });
+        }
+
+        #[bench]
+        fn $deserialize_ne_fname( b: &mut Bencher ) {
+            use speedy::{Readable, Writable};
+
+            let value = default_value_ne();
+            let mut buffer = empty_vec();
+            value.write_to_stream( &mut buffer ).unwrap();
+
+            b.iter( || {
+                let deserialized: FooNonExhaustive = Readable::read_from_buffer( &buffer ).unwrap();
                 deserialized
             });
         }
@@ -290,8 +355,8 @@ fn foreign_endianness() -> speedy::Endianness {
     }
 }
 
-speedy_benches!( serialize_speedy, deserialize_speedy, speedy::Endianness::NATIVE );
-speedy_benches!( serialize_speedy_foreign_endianness, deserialize_speedy_foreign_endianness, foreign_endianness() );
+speedy_benches!( serialize_speedy, deserialize_speedy, speedy::Endianness::NATIVE, serialize_speedy_ne, deserialize_speedy_ne );
+speedy_benches!( serialize_speedy_foreign_endianness, deserialize_speedy_foreign_endianness, foreign_endianness(), serialize_speedy_foreign_endianness_ne, deserialize_speedy_foreign_endianness_ne );
 
 #[bench]
 fn serialize_serde_bincode( b: &mut Bencher ) {
@@ -337,7 +402,7 @@ fn serialize_serde_pickle( b: &mut Bencher ) {
 
     b.iter( || {
         let mut buffer = empty_vec();
-        serde_pickle::to_writer( &mut buffer, &value, true ).unwrap();
+        serde_pickle::to_writer( &mut buffer, &value, SerOptions::new().compat_enum_repr() ).unwrap();
         buffer
     });
 }
